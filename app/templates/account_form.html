@@ -1,0 +1,33 @@
+<!-- app/templates/account_form.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Create Account{% endblock %}
+
+{% block content %}
+<h2>Create New Account</h2>
+<form method="post">
+    {{ form.hidden_tag() }}
+    
+    <!-- Display Form Errors -->
+    {% if form.errors %}
+        <ul class="errors">
+            {% for field, errors in form.errors.items() %}
+                {% for error in errors %}
+                    <li>{{ error }}</li>
+                {% endfor %}
+            {% endfor %}
+        </ul>
+    {% endif %}
+    
+    <p>
+        {{ form.name.label }}<br>
+        {{ form.name(size=32) }}
+    </p>
+    <p>
+        {{ form.type.label }}<br>
+        {{ form.type() }}
+    </p>
+    <p>{{ form.submit() }}</p>
+</form>
+{% endblock %}

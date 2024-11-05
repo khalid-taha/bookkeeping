@@ -1,0 +1,14 @@
+<!-- app/templates/index.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Home - Bookkeeping App{% endblock %}
+
+{% block content %}
+<h1>Welcome to the Bookkeeping Application</h1>
+<nav>
+    <a href="{{ url_for('auth.login') }}">Login</a> |
+    <a href="{{ url_for('accounts.list_accounts') }}">Accounts</a> |
+    <a href="{{ url_for('transactions.list_transactions') }}">Transactions</a>
+</nav>
+{% endblock %}

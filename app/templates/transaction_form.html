@@ -1,0 +1,33 @@
+<!-- app/templates/transaction_form.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Create Transaction{% endblock %}
+
+{% block content %}
+<h2>Create New Transaction</h2>
+<form method="post">
+    {{ form.hidden_tag() }}
+    <p>
+        {{ form.date.label }}<br>
+        {{ form.date() }}
+    </p>
+    <p>
+        {{ form.amount.label }}<br>
+        {{ form.amount() }}
+    </p>
+    <p>
+        {{ form.description.label }}<br>
+        {{ form.description(size=64) }}
+    </p>
+    <p>
+        {{ form.debit_account.label }}<br>
+        {{ form.debit_account() }}
+    </p>
+    <p>
+        {{ form.credit_account.label }}<br>
+        {{ form.credit_account() }}
+    </p>
+    <p>{{ form.submit() }}</p>
+</form>
+{% endblock %}

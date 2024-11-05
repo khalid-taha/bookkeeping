@@ -1,0 +1,15 @@
+<!-- app/templates/transaction_list.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Transaction List{% endblock %}
+
+{% block content %}
+<h2>Transactions</h2>
+<ul>
+    {% for transaction in transactions %}
+        <li>{{ transaction.description }} - {{ transaction.amount }} on {{ transaction.date.strftime('%Y-%m-%d %H:%M:%S') }}</li>
+    {% endfor %}
+</ul>
+<a href="{{ url_for('transactions.new_transaction') }}">Create New Transaction</a>
+{% endblock %}
