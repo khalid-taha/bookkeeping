@@ -11,3 +11,5 @@ flask-marshmallow
 flask-restx
 python-dateutil
 marshmallow-sqlalchemy
+numpy
+

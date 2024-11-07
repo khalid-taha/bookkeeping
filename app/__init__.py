@@ -11,6 +11,8 @@ from app.views.accounts import bp as accounts_bp
 from app.views.transactions import bp as transactions_bp
 from app.api import api_bp  # Import the API blueprint
 from flask import make_response, jsonify, request, redirect, url_for
+import importlib
+import pkgutil
 
 def create_app(config_object='config.DevelopmentConfig'):
     app = Flask(__name__)
@@ -45,5 +47,17 @@ def create_app(config_object='config.DevelopmentConfig'):
     app.register_blueprint(transactions_bp)
     app.register_blueprint(api_bp)  # Register the API blueprint
 
+    # Load Plugins
+    load_plugins(app)
+
     return app
 
+def load_plugins(app):
+    from modules.plugins import PluginBase
+    import modules.plugins
+
+    for _, name, is_pkg in pkgutil.iter_modules(modules.plugins.__path__):
+        if not is_pkg:
+            module = importlib.import_module(f'modules.plugins.{name}')
+            if hasattr(module, 'plugin') and isinstance(module.plugin, PluginBase):
+                module.plugin.register(app)

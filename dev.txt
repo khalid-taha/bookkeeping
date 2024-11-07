@@ -23,6 +23,9 @@ flask db upgrade
 python create_user.py
 
 
+# testing plugins
+http://localhost:5000/sample_plugin/
+http://localhost:5000/ml/predict?input=1,2,3,4,5
 
 
 

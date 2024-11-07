@@ -634,6 +634,8 @@ from app.views.accounts import bp as accounts_bp
 from app.views.transactions import bp as transactions_bp
 from app.api import api_bp  # Import the API blueprint
 from flask import make_response, jsonify, request, redirect, url_for
+import importlib
+import pkgutil
 
 def create_app(config_object='config.DevelopmentConfig'):
     app = Flask(__name__)
@@ -668,8 +670,20 @@ def create_app(config_object='config.DevelopmentConfig'):
     app.register_blueprint(transactions_bp)
     app.register_blueprint(api_bp)  # Register the API blueprint
 
+    # Load Plugins
+    load_plugins(app)
+
     return app
 
+def load_plugins(app):
+    from modules.plugins import PluginBase
+    import modules.plugins
+
+    for _, name, is_pkg in pkgutil.iter_modules(modules.plugins.__path__):
+        if not is_pkg:
+            module = importlib.import_module(f'modules.plugins.{name}')
+            if hasattr(module, 'plugin') and isinstance(module.plugin, PluginBase):
+                module.plugin.register(app)
 ===== ./config.py =====
 # config.py
 import os
@@ -999,6 +1013,77 @@ class User(UserMixin, db.Model):
     def __repr__(self):
         return f"<User {self.username}>"
 ===== ./modules/models/__init__.py =====
+===== ./modules/plugins/ml_plugin.py =====
+# modules/plugins/ml_plugin.py
+
+from modules.plugins import PluginBase
+from flask import Blueprint, request, jsonify
+import numpy as np
+
+class MLPlugin(PluginBase):
+    def register(self, app):
+        bp = Blueprint('ml_plugin', __name__, url_prefix='/ml')
+
+        @bp.route('/predict', methods=['GET', 'POST'])
+        def predict():
+            if request.method == 'POST':
+                data = request.json
+                if not data or 'input' not in data:
+                    return jsonify({'error': 'No input provided.'}), 400
+                try:
+                    # Ensure input is a list of numbers
+                    data['input'] = [float(x) for x in data['input']]
+                except (ValueError, TypeError):
+                    return jsonify({'error': 'Invalid input format.'}), 400
+            else:
+                # For GET requests, parse input from query parameters
+                input_str = request.args.get('input')
+                if not input_str:
+                    return jsonify({'error': 'No input provided.'}), 400
+                try:
+                    data = {'input': [float(x) for x in input_str.split(',')]}
+                except ValueError:
+                    return jsonify({'error': 'Invalid input format.'}), 400
+
+            # Dummy prediction logic
+            x = np.array(data['input'])
+            prediction = x.sum()
+            # Convert prediction to native Python data type
+            return jsonify({'prediction': prediction.item()})
+
+        app.register_blueprint(bp)
+
+plugin = MLPlugin()
+===== ./modules/plugins/sample_plugin.py =====
+# modules/plugins/sample_plugin.py
+
+from modules.plugins import PluginBase
+from flask import Blueprint
+
+class SamplePlugin(PluginBase):
+    def register(self, app):
+        # Create a blueprint for the plugin
+        bp = Blueprint('sample_plugin', __name__, url_prefix='/sample_plugin')
+
+        @bp.route('/')
+        def index():
+            return "Hello from Sample Plugin!"
+
+        # Register the blueprint with the app
+        app.register_blueprint(bp)
+
+# Instantiate the plugin
+plugin = SamplePlugin()
+===== ./modules/plugins/__init__.py =====
+# modules/plugins/__init__.py
+
+class PluginBase:
+    def register(self, app):
+        """
+        Method to register the plugin with the Flask app.
+        Must be implemented by all plugins.
+        """
+        raise NotImplementedError("Plugins must implement the 'register' method.")
 ===== ./modules/services/decorators.py =====
 # modules/services/decorators.py
 
@@ -1265,6 +1350,53 @@ def test_user(db):
 @pytest.fixture(scope='function')
 def client(app, db):
     return app.test_client()
+===== ./tests/plugins/test_ml_plugin.py =====
+# tests/plugins/test_ml_plugin.py
+
+import json
+
+def test_ml_plugin_post(client):
+    # Test POST request with valid input
+    response = client.post('/ml/predict', json={'input': [1, 2, 3, 4, 5]})
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['prediction'] == 15
+
+def test_ml_plugin_post_invalid_input(client):
+    # Test POST request with invalid input
+    response = client.post('/ml/predict', json={'input': 'invalid'})
+    assert response.status_code == 400
+    data = response.get_json()
+    assert 'error' in data
+
+def test_ml_plugin_get(client):
+    # Test GET request with valid input
+    response = client.get('/ml/predict?input=1,2,3,4,5')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['prediction'] == 15.0
+
+def test_ml_plugin_get_no_input(client):
+    # Test GET request without input
+    response = client.get('/ml/predict')
+    assert response.status_code == 400
+    data = response.get_json()
+    assert 'error' in data
+
+def test_ml_plugin_get_invalid_input(client):
+    # Test GET request with invalid input
+    response = client.get('/ml/predict?input=a,b,c')
+    assert response.status_code == 400
+    data = response.get_json()
+    assert 'error' in data
+===== ./tests/plugins/test_sample_plugin.py =====
+# tests/plugins/test_sample_plugin.py
+
+def test_sample_plugin(client):
+    response = client.get('/sample_plugin/')
+    assert response.status_code == 200
+    assert response.data.decode() == 'Hello from Sample Plugin!'
+
 ===== ./tests/test_models.py =====
 # tests/test_models.py
 
