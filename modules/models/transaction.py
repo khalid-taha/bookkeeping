@@ -6,7 +6,7 @@ from modules.models.account import Account
 class Transaction(db.Model):
     __tablename__ = 'transactions'
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.DateTime, nullable=False)
+    date = db.Column(db.Date, nullable=False)  # Changed from db.DateTime to db.Date
     amount = db.Column(db.Float, nullable=False)
     description = db.Column(db.String(255), nullable=False)
     debit_account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)

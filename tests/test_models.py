@@ -1,6 +1,6 @@
 # tests/test_models.py
 
-from datetime import datetime, timezone
+from datetime import date
 
 def test_transaction_model(db):
     from modules.models.account import Account
@@ -13,9 +13,12 @@ def test_transaction_model(db):
     db.session.add_all([debit_account, credit_account])
     db.session.commit()
 
-    # Create a transaction with timezone-aware date
+    # Use date object for the date field
+    transaction_date = date.today()
+
+    # Create a transaction with date
     transaction = Transaction(
-        date=datetime.now(timezone.utc),  # Updated datetime
+        date=transaction_date,
         debit_account_id=debit_account.id,
         credit_account_id=credit_account.id,
         amount=1000.00,
@@ -27,5 +30,6 @@ def test_transaction_model(db):
 
     # Assertions
     assert transaction.id is not None
+    assert transaction.date == transaction_date
     assert transaction.debit_account.name == 'Cash_Test'
     assert transaction.credit_account.name == 'Revenue_Test'

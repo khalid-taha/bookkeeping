@@ -1,1 +1,29 @@
 find . -path "./.venv" -prune -o -type f \( -name "*.py" -o -name "*.html" \) -exec echo "===== {} =====" \; -exec cat {} \; > all_code.txt
+
+
+# run application
+export FLASK_APP='app:create_app'
+export FLASK_DEBUG=1
+flask run
+
+# login details
+Username: admin
+Password: securepassword123
+
+# running a database migration
+flask db migrate -m "Change date column to Date"
+flask db upgrade
+
+# re-creating blank database
+rm data/app.db
+rm -rf migrations
+flask db init
+flask db migrate -m "Initial migration"
+flask db upgrade
+python create_user.py
+
+
+
+
+
+

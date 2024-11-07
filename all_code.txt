@@ -155,11 +155,22 @@ if __name__ == '__main__':
 
 {% block content %}
 <h2>Create New Transaction</h2>
+
+{% if form.errors %}
+    <ul class="errors">
+        {% for field, errors in form.errors.items() %}
+            {% for error in errors %}
+                <li>{{ error }}</li>
+            {% endfor %}
+        {% endfor %}
+    </ul>
+{% endif %}
+
 <form method="post">
     {{ form.hidden_tag() }}
     <p>
         {{ form.date.label }}<br>
-        {{ form.date() }}
+        {{ form.date(type='date') }}  <!-- Set input type to 'date' -->
     </p>
     <p>
         {{ form.amount.label }}<br>
@@ -384,6 +395,34 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'  # In-memory DB for testing
     WTF_CSRF_ENABLED = False  # Disable CSRF for testing
+===== ./create_user.py =====
+# create_user.py
+
+from app import create_app
+from modules.database.db import db
+from modules.models.user import User
+from werkzeug.security import generate_password_hash
+
+app = create_app()
+
+with app.app_context():
+    # Replace 'admin' and 'admin123' with your desired username and password
+    username = 'admin'
+    password = 'securepassword123'
+    role = 'Admin'
+
+    # Check if the user already exists
+    if not User.query.filter_by(username=username).first():
+        user = User(
+            username=username,
+            password_hash=generate_password_hash(password),
+            role=role
+        )
+        db.session.add(user)
+        db.session.commit()
+        print(f'User {username} created successfully.')
+    else:
+        print(f'User {username} already exists.')
 ===== ./migrations/env.py =====
 import logging
 from logging.config import fileConfig
@@ -498,12 +537,12 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-===== ./migrations/versions/e70c7b1df6a5_initial_migration.py =====
+===== ./migrations/versions/4754bb485e92_initial_migration.py =====
 """Initial migration
 
-Revision ID: e70c7b1df6a5
+Revision ID: 4754bb485e92
 Revises: 
-Create Date: 2024-11-05 18:37:16.754153
+Create Date: 2024-11-07 00:05:34.478156
 
 """
 from alembic import op
@@ -511,7 +550,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'e70c7b1df6a5'
+revision = '4754bb485e92'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -536,7 +575,7 @@ def upgrade():
     )
     op.create_table('transactions',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('date', sa.DateTime(), nullable=False),
+    sa.Column('date', sa.Date(), nullable=False),
     sa.Column('amount', sa.Float(), nullable=False),
     sa.Column('description', sa.String(length=255), nullable=False),
     sa.Column('debit_account_id', sa.Integer(), nullable=False),
@@ -594,15 +633,19 @@ class LoginForm(FlaskForm):
 # modules/forms/transaction_form.py
 
 from flask_wtf import FlaskForm
-from wtforms import StringField, FloatField, SelectField, DateTimeField, SubmitField
+from wtforms import StringField, FloatField, SelectField, DateField, SubmitField
 from wtforms.validators import DataRequired
 
 class TransactionForm(FlaskForm):
-    date = DateTimeField('Date', validators=[DataRequired()])
-    amount = FloatField('Amount', validators=[DataRequired()])
-    description = StringField('Description', validators=[DataRequired()])
-    debit_account = SelectField('Debit Account', coerce=int, validators=[DataRequired()])
-    credit_account = SelectField('Credit Account', coerce=int, validators=[DataRequired()])
+    date = DateField(
+        'Date',
+        format='%Y-%m-%d',
+        validators=[DataRequired(message="Please enter a valid date. Format: YYYY-MM-DD")]
+    )
+    amount = FloatField('Amount', validators=[DataRequired(message="Please enter a valid amount.")])
+    description = StringField('Description', validators=[DataRequired(message="Description is required.")])
+    debit_account = SelectField('Debit Account', coerce=int, validators=[DataRequired(message="Please select a debit account.")])
+    credit_account = SelectField('Credit Account', coerce=int, validators=[DataRequired(message="Please select a credit account.")])
     submit = SubmitField('Create Transaction')
 ===== ./modules/forms/__init__.py =====
 ===== ./modules/ml/models/__init__.py =====
@@ -631,7 +674,7 @@ from modules.models.account import Account
 class Transaction(db.Model):
     __tablename__ = 'transactions'
     id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.DateTime, nullable=False)
+    date = db.Column(db.Date, nullable=False)  # Changed from db.DateTime to db.Date
     amount = db.Column(db.Float, nullable=False)
     description = db.Column(db.String(255), nullable=False)
     debit_account_id = db.Column(db.Integer, db.ForeignKey('accounts.id'), nullable=False)
@@ -669,14 +712,16 @@ from modules.database.db import db as _db
 from modules.models.user import User
 from werkzeug.security import generate_password_hash
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='function')
 def app():
     app = create_app('config.TestingConfig')  # Use TestingConfig
     app.config['TESTING'] = True
-    # The following configurations are already set in TestingConfig
-    # app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-    # app.config['WTF_CSRF_ENABLED'] = False
 
+    with app.app_context():
+        yield app
+
+@pytest.fixture(scope='function')
+def db(app):
     with app.app_context():
         _db.create_all()
         # Create a test user
@@ -687,30 +732,24 @@ def app():
         )
         _db.session.add(test_user)
         _db.session.commit()
-        yield app
+        yield _db
+        _db.session.close()
         _db.drop_all()
-
-@pytest.fixture(scope='session')
-def db(app):
-    return _db
 
 @pytest.fixture(scope='function')
 def client(app, db):
     with app.test_client() as client:
         # Log in the test user
-        response = client.post('/auth/login', data={
+        client.post('/auth/login', data={
             'username': 'testuser',
             'password': 'testpassword'
         }, follow_redirects=True)
         yield client
-        # Log out after test
-        response = client.get('/auth/logout', follow_redirects=True)
-        # Rollback the session to clean up after the test
-        db.session.rollback()
+        # No need to logout and rollback, as the database is dropped after each test
 ===== ./tests/test_models.py =====
 # tests/test_models.py
 
-from datetime import datetime, timezone
+from datetime import date
 
 def test_transaction_model(db):
     from modules.models.account import Account
@@ -723,9 +762,12 @@ def test_transaction_model(db):
     db.session.add_all([debit_account, credit_account])
     db.session.commit()
 
-    # Create a transaction with timezone-aware date
+    # Use date object for the date field
+    transaction_date = date.today()
+
+    # Create a transaction with date
     transaction = Transaction(
-        date=datetime.now(timezone.utc),  # Updated datetime
+        date=transaction_date,
         debit_account_id=debit_account.id,
         credit_account_id=credit_account.id,
         amount=1000.00,
@@ -737,12 +779,14 @@ def test_transaction_model(db):
 
     # Assertions
     assert transaction.id is not None
+    assert transaction.date == transaction_date
     assert transaction.debit_account.name == 'Cash_Test'
     assert transaction.credit_account.name == 'Revenue_Test'
 ===== ./tests/test_views.py =====
 # tests/test_views.py
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import pytest
 from modules.models.account import Account
 from modules.models.transaction import Transaction
 
@@ -757,7 +801,7 @@ def test_new_account(client, db):
     }, follow_redirects=True)
 
     assert response.status_code == 200
-    assert b'Account created successfully' in response.data  # Adjust based on your flash message
+    assert b'Account created successfully.' in response.data  # Adjust based on your flash message
 
     # Attempt to create the same account again to test uniqueness
     response_duplicate = client.post('/accounts/new', data={
@@ -766,5 +810,64 @@ def test_new_account(client, db):
     }, follow_redirects=True)
 
     assert response_duplicate.status_code == 200  # Expecting OK status with form re-rendered
-    assert b'Account name already exists' in response_duplicate.data  # Verify error message
+    assert b'Account name already exists.' in response_duplicate.data  # Verify error message
+
+def test_new_transaction(client, db):
+    # Create accounts needed for the transaction
+    debit_account = Account(name='Cash_Test', type='Asset')
+    credit_account = Account(name='Revenue_Test', type='Revenue')
+
+    db.session.add_all([debit_account, credit_account])
+    db.session.commit()
+
+    # Prepare transaction data
+    transaction_data = {
+        'date': date.today().strftime('%Y-%m-%d'),  # Format date as string
+        'amount': '500.00',  # Amount must be a string when simulating form data
+        'description': 'Test Transaction via Web',
+        'debit_account': str(debit_account.id),
+        'credit_account': str(credit_account.id),
+        'submit': 'Create Transaction'
+    }
+
+    # Create the transaction via the web interface
+    response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
+
+    # Assert the response indicates success
+    assert response.status_code == 200  # Adjust if you expect a redirect (e.g., 302)
+    assert b'Transaction created successfully.' in response.data  # Check for success message
+
+    # Verify the transaction was saved in the database
+    transaction = Transaction.query.filter_by(description='Test Transaction via Web').first()
+    assert transaction is not None
+    assert transaction.amount == 500.00
+    assert transaction.date == date.today()
+    assert transaction.debit_account_id == debit_account.id
+    assert transaction.credit_account_id == credit_account.id
+
+def test_new_transaction_invalid_data(client, db):
+    # Prepare incomplete transaction data
+    transaction_data = {
+        'date': '',  # Missing date
+        'amount': '',  # Missing amount
+        'description': '',  # Missing description
+        'debit_account': '',  # Missing debit account
+        'credit_account': '',  # Missing credit account
+        'submit': 'Create Transaction'
+    }
+
+    # Attempt to create the transaction
+    response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
+
+    # Assert the form re-renders with errors
+    assert response.status_code == 200
+    assert b'Please enter a valid date' in response.data
+    assert b'Please enter a valid amount' in response.data
+    assert b'Description is required' in response.data
+    assert b'Please select a debit account' in response.data
+    assert b'Please select a credit account' in response.data
+
+    # Ensure no transaction was created
+    transaction = Transaction.query.filter_by(description='').first()
+    assert transaction is None
 ===== ./tests/__init__.py =====
