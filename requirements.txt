@@ -6,3 +6,8 @@ Flask-SQLAlchemy
 WTForms
 email-validator
 pytest
+marshmallow 
+flask-marshmallow
+flask-restx
+python-dateutil
+marshmallow-sqlalchemy

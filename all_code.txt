@@ -1,4 +1,289 @@
-===== ./app/main.py =====
+===== ./app/api/accounts_api.py =====
+# app/api/accounts_api.py
+
+from flask import request
+from flask_restx import Namespace, Resource, fields
+from modules.models.account import Account
+from modules.database.db import db
+from flask_login import login_required
+from . import api
+
+accounts_ns = Namespace('accounts', description='Accounts related operations')
+
+account_model = accounts_ns.model('Account', {
+    'id': fields.Integer(readOnly=True, description='The unique identifier of an account'),
+    'name': fields.String(required=True, description='Account name'),
+    'type': fields.String(required=True, description='Account type')
+})
+
+@accounts_ns.route('/')
+class AccountList(Resource):
+    @accounts_ns.marshal_list_with(account_model)
+    @login_required
+    def get(self):
+        """List all accounts"""
+        accounts = Account.query.all()
+        return accounts, 200
+
+    @accounts_ns.expect(account_model, validate=True)
+    @accounts_ns.marshal_with(account_model, code=201)
+    @login_required
+    def post(self):
+        """Create a new account"""
+        data = request.json
+        if db.session.execute(db.select(Account).filter_by(name=data['name'])).scalar():
+            accounts_ns.abort(400, 'Account name already exists.')
+        new_account = Account(name=data['name'], type=data['type'])
+        db.session.add(new_account)
+        db.session.commit()
+        return new_account, 201
+
+@accounts_ns.route('/<int:id>')
+@accounts_ns.response(404, 'Account not found')
+@accounts_ns.param('id', 'The account identifier')
+class AccountResource(Resource):
+    @accounts_ns.marshal_with(account_model)
+    @login_required
+    def get(self, id):
+        """Fetch a given account"""
+        account = db.session.get(Account, id)
+        if not account:
+            accounts_ns.abort(404, 'Account not found')
+        return account, 200
+
+    @accounts_ns.expect(account_model, validate=True)
+    @accounts_ns.marshal_with(account_model)
+    @login_required
+    def put(self, id):
+        """Update a given account"""
+        account = db.session.get(Account, id)
+        if not account:
+            accounts_ns.abort(404, 'Account not found')
+        data = request.json
+        if 'name' in data:
+            if db.session.execute(db.select(Account).filter(Account.name == data['name'], Account.id != id)).scalar():
+                accounts_ns.abort(400, 'Another account with this name already exists.')
+            account.name = data['name']
+        if 'type' in data:
+            account.type = data['type']
+        db.session.commit()
+        return account, 200
+
+    @accounts_ns.response(204, 'Account deleted')
+    @login_required
+    def delete(self, id):
+        """Delete a given account"""
+        account = db.session.get(Account, id)
+        if not account:
+            accounts_ns.abort(404, 'Account not found')
+        db.session.delete(account)
+        db.session.commit()
+        return '', 204
+===== ./app/api/auth_api.py =====
+# app/api/auth_api.py
+
+from flask import request
+from modules.models.user import User
+from modules.database.db import db
+from werkzeug.security import check_password_hash
+from flask_login import login_user, logout_user, login_required, current_user
+from flask_restx import Namespace, Resource, fields
+from . import api
+
+auth_ns = Namespace('auth', description='Authentication related operations')
+
+login_model = auth_ns.model('Login', {
+    'username': fields.String(required=True, description='Username'),
+    'password': fields.String(required=True, description='Password')
+})
+
+user_model = auth_ns.model('User', {
+    'id': fields.Integer(readOnly=True, description='User ID'),
+    'username': fields.String(required=True, description='Username'),
+    'role': fields.String(required=True, description='User role')
+})
+
+@auth_ns.route('/login')
+class Login(Resource):
+    @auth_ns.expect(login_model, validate=True)
+    @auth_ns.marshal_with(user_model)
+    def post(self):
+        """Authenticate a user and log them in"""
+        data = request.json
+        user = db.session.execute(db.select(User).filter_by(username=data['username'])).scalar()
+        if user and check_password_hash(user.password_hash, data['password']):
+            login_user(user)
+            return user, 200
+        else:
+            auth_ns.abort(400, 'Invalid username or password.')
+
+@auth_ns.route('/logout')
+class Logout(Resource):
+    @login_required
+    def post(self):
+        """Log the current user out"""
+        logout_user()
+        return {'message': 'Logged out successfully.'}, 200
+
+@auth_ns.route('/user')
+class CurrentUser(Resource):
+    @login_required
+    @auth_ns.marshal_with(user_model)
+    def get(self):
+        """Get the current logged-in user's information"""
+        return current_user, 200
+===== ./app/api/transactions_api.py =====
+# app/api/transactions_api.py
+
+from flask import request
+from flask_restx import Namespace, Resource, fields
+from modules.models.transaction import Transaction
+from modules.models.account import Account
+from modules.database.db import db
+from flask_login import login_required
+from . import api
+from dateutil import parser
+
+transactions_ns = Namespace('transactions', description='Transactions related operations')
+
+transaction_model = transactions_ns.model('Transaction', {
+    'id': fields.Integer(readOnly=True, description='The unique identifier of a transaction'),
+    'date': fields.DateTime(required=True, description='Date of the transaction'),
+    'amount': fields.Float(required=True, description='Amount of the transaction'),
+    'description': fields.String(required=True, description='Description of the transaction'),
+    'debit_account_id': fields.Integer(required=True, description='Debit account ID'),
+    'credit_account_id': fields.Integer(required=True, description='Credit account ID')
+})
+
+transaction_update_model = transactions_ns.model('TransactionUpdate', {
+    'date': fields.DateTime(description='Date of the transaction'),
+    'amount': fields.Float(description='Amount of the transaction'),
+    'description': fields.String(description='Description of the transaction'),
+    'debit_account_id': fields.Integer(description='Debit account ID'),
+    'credit_account_id': fields.Integer(description='Credit account ID')
+})
+
+@transactions_ns.route('/')
+class TransactionList(Resource):
+    @transactions_ns.marshal_list_with(transaction_model)
+    @login_required
+    def get(self):
+        """List all transactions"""
+        transactions = Transaction.query.all()
+        return transactions, 200
+
+    @transactions_ns.expect(transaction_model, validate=True)
+    @transactions_ns.marshal_with(transaction_model, code=201)
+    @login_required
+    def post(self):
+        """Create a new transaction"""
+        data = request.json
+        required_fields = ['date', 'amount', 'description', 'debit_account_id', 'credit_account_id']
+        if not all(field in data for field in required_fields):
+            transactions_ns.abort(400, 'All fields are required.')
+
+        # Validate accounts exist
+        debit_account = db.session.get(Account, data['debit_account_id'])
+        credit_account = db.session.get(Account, data['credit_account_id'])
+        if not debit_account or not credit_account:
+            transactions_ns.abort(400, 'Invalid debit or credit account ID.')
+
+        # Parse and validate date
+        try:
+            date = parser.isoparse(data['date'])
+        except (ValueError, TypeError):
+            transactions_ns.abort(400, 'Invalid date format.')
+
+        new_transaction = Transaction(
+            date=date,
+            amount=data['amount'],
+            description=data['description'],
+            debit_account_id=data['debit_account_id'],
+            credit_account_id=data['credit_account_id']
+        )
+        db.session.add(new_transaction)
+        db.session.commit()
+        return new_transaction, 201
+
+@transactions_ns.route('/<int:id>')
+@transactions_ns.response(404, 'Transaction not found')
+@transactions_ns.param('id', 'The transaction identifier')
+class TransactionResource(Resource):
+    @transactions_ns.marshal_with(transaction_model)
+    @login_required
+    def get(self, id):
+        """Fetch a given transaction"""
+        transaction = db.session.get(Transaction, id)
+        if not transaction:
+            transactions_ns.abort(404, 'Transaction not found')
+        return transaction, 200
+
+    @transactions_ns.expect(transaction_update_model, validate=True)
+    @transactions_ns.marshal_with(transaction_model)
+    @login_required
+    def put(self, id):
+        """Update a given transaction"""
+        transaction = db.session.get(Transaction, id)
+        if not transaction:
+            transactions_ns.abort(404, 'Transaction not found')
+        data = request.json
+
+        if 'date' in data:
+            try:
+                transaction.date = parser.isoparse(data['date'])
+            except (ValueError, TypeError):
+                transactions_ns.abort(400, 'Invalid date format.')
+
+        if 'amount' in data:
+            transaction.amount = data['amount']
+
+        if 'description' in data:
+            transaction.description = data['description']
+
+        if 'debit_account_id' in data:
+            debit_account = db.session.get(Account, data['debit_account_id'])
+            if not debit_account:
+                transactions_ns.abort(400, 'Invalid debit account ID.')
+            transaction.debit_account_id = data['debit_account_id']
+
+        if 'credit_account_id' in data:
+            credit_account = db.session.get(Account, data['credit_account_id'])
+            if not credit_account:
+                transactions_ns.abort(400, 'Invalid credit account ID.')
+            transaction.credit_account_id = data['credit_account_id']
+
+        db.session.commit()
+        return transaction, 200
+
+    @transactions_ns.response(204, 'Transaction deleted')
+    @login_required
+    def delete(self, id):
+        """Delete a given transaction"""
+        transaction = db.session.get(Transaction, id)
+        if not transaction:
+            transactions_ns.abort(404, 'Transaction not found')
+        db.session.delete(transaction)
+        db.session.commit()
+        return '', 204
+===== ./app/api/__init__.py =====
+# app/api/__init__.py
+
+from flask import Blueprint
+from flask_restx import Api
+
+api_bp = Blueprint('api', __name__, url_prefix='/api')
+api = Api(api_bp, version='1.0', title='Bookkeeping API',
+          description='APIs for Internal Module Communication')
+
+# Import API modules
+from .accounts_api import accounts_ns
+from .transactions_api import transactions_ns
+from .auth_api import auth_ns
+
+# Add Namespaces to the API
+api.add_namespace(accounts_ns)
+api.add_namespace(transactions_ns)
+api.add_namespace(auth_ns)===== ./app/main.py =====
 # app/main.py
 from app import create_app
 
@@ -340,12 +625,15 @@ __all__ = ['accounts_bp', 'transactions_bp', 'auth_bp']
 
 from flask import Flask
 from modules.database.db import db
+from modules.services import ma  # Marshmallow instance
 from flask_migrate import Migrate
 from flask_login import LoginManager
 from app.views.main import bp as main_bp
 from app.views.auth import bp as auth_bp
 from app.views.accounts import bp as accounts_bp
 from app.views.transactions import bp as transactions_bp
+from app.api import api_bp  # Import the API blueprint
+from flask import make_response, jsonify, request, redirect, url_for
 
 def create_app(config_object='config.DevelopmentConfig'):
     app = Flask(__name__)
@@ -353,6 +641,7 @@ def create_app(config_object='config.DevelopmentConfig'):
 
     # Initialize extensions
     db.init_app(app)
+    ma.init_app(app)  # Initialize Marshmallow
     migrate = Migrate(app, db)
 
     # Initialize Flask-Login
@@ -365,13 +654,22 @@ def create_app(config_object='config.DevelopmentConfig'):
         from modules.models.user import User
         return User.query.get(int(user_id))
 
+    @login_manager.unauthorized_handler
+    def unauthorized():
+        if request.path.startswith('/api/'):
+            return make_response(jsonify({'message': 'Unauthorized access'}), 401)
+        else:
+            return redirect(url_for('auth.login', next=request.url))
+
     # Register Blueprints
     app.register_blueprint(main_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(accounts_bp)
     app.register_blueprint(transactions_bp)
+    app.register_blueprint(api_bp)  # Register the API blueprint
 
     return app
+
 ===== ./config.py =====
 # config.py
 import os
@@ -701,8 +999,235 @@ class User(UserMixin, db.Model):
     def __repr__(self):
         return f"<User {self.username}>"
 ===== ./modules/models/__init__.py =====
+===== ./modules/services/decorators.py =====
+# modules/services/decorators.py
+
+from functools import wraps
+from flask import jsonify
+from flask_login import current_user
+
+def roles_required(*roles):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if current_user.role not in roles:
+                return jsonify({'error': 'Unauthorized access.'}), 403
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator===== ./modules/services/schemas.py =====
+# modules/services/schemas.py
+
+from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
+from modules.models.account import Account
+from modules.models.transaction import Transaction
+from modules.models.user import User
+
+class AccountSchema(SQLAlchemyAutoSchema):
+    class Meta:
+        model = Account
+        load_instance = True
+
+class TransactionSchema(SQLAlchemyAutoSchema):
+    class Meta:
+        model = Transaction
+        load_instance = True
+
+class UserSchema(SQLAlchemyAutoSchema):
+    class Meta:
+        model = User
+        load_instance = True
+        exclude = ('password_hash',)
 ===== ./modules/services/__init__.py =====
+# modules/services/__init__.py
+
+from flask_marshmallow import Marshmallow
+
+ma = Marshmallow()
 ===== ./modules/__init__.py =====
+===== ./tests/api/test_accounts_api.py =====
+# tests/api/test_accounts_api.py
+
+import pytest
+
+@pytest.fixture
+def new_account_data():
+    return {
+        'name': 'Test Account',
+        'type': 'Asset'
+    }
+
+def login(client, test_user):
+    client.post('/api/auth/login', json={
+        'username': test_user.username,
+        'password': 'testpass'
+    })
+
+def test_get_accounts(client, test_user):
+    login(client, test_user)
+    response = client.get('/api/accounts/')
+    assert response.status_code == 200
+    assert isinstance(response.json, list)
+
+def test_create_account(client, db, test_user, new_account_data):
+    login(client, test_user)
+    response = client.post('/api/accounts/', json=new_account_data)
+    assert response.status_code == 201
+    assert response.json['name'] == new_account_data['name']
+
+def test_create_duplicate_account(client, db, test_user, new_account_data):
+    login(client, test_user)
+    client.post('/api/accounts/', json=new_account_data)
+    response = client.post('/api/accounts/', json=new_account_data)
+    assert response.status_code == 400
+    assert 'Account name already exists.' in response.json['message']
+
+def test_get_single_account(client, db, test_user, new_account_data):
+    login(client, test_user)
+    response = client.post('/api/accounts/', json=new_account_data)
+    account_id = response.json['id']
+    response = client.get(f'/api/accounts/{account_id}')
+    assert response.status_code == 200
+    assert response.json['id'] == account_id
+
+def test_update_account(client, db, test_user, new_account_data):
+    login(client, test_user)
+    response = client.post('/api/accounts/', json=new_account_data)
+    account_id = response.json['id']
+    updated_data = {'name': 'Updated Account', 'type': 'Liability'}
+    response = client.put(f'/api/accounts/{account_id}', json=updated_data)
+    assert response.status_code == 200
+    assert response.json['name'] == updated_data['name']
+
+def test_delete_account(client, db, test_user, new_account_data):
+    login(client, test_user)
+    response = client.post('/api/accounts/', json=new_account_data)
+    account_id = response.json['id']
+    response = client.delete(f'/api/accounts/{account_id}')
+    assert response.status_code == 204
+    response = client.get(f'/api/accounts/{account_id}')
+    assert response.status_code == 404
+===== ./tests/api/test_auth_api.py =====
+# tests/api/test_auth_api.py
+
+import pytest
+
+def test_login(client, test_user):
+    response = client.post('/api/auth/login', json={
+        'username': test_user.username,
+        'password': 'testpass'
+    })
+    assert response.status_code == 200
+    assert response.json['username'] == test_user.username
+
+def test_login_invalid_credentials(client):
+    response = client.post('/api/auth/login', json={
+        'username': 'wronguser',
+        'password': 'wrongpass'
+    })
+    assert response.status_code == 400
+    assert 'Invalid username or password.' in response.json['message']
+
+def test_get_current_user(client, test_user):
+    # Log in first
+    client.post('/api/auth/login', json={
+        'username': test_user.username,
+        'password': 'testpass'
+    })
+
+    # Get current user
+    response = client.get('/api/auth/user')
+    assert response.status_code == 200
+    assert response.json['username'] == test_user.username
+
+def test_logout(client, test_user):
+    # Log in first
+    client.post('/api/auth/login', json={
+        'username': test_user.username,
+        'password': 'testpass'
+    })
+
+    # Log out
+    response = client.post('/api/auth/logout')
+    assert response.status_code == 200
+    assert response.json['message'] == 'Logged out successfully.'
+
+    # Attempt to access protected endpoint
+    response = client.get('/api/auth/user')
+    assert response.status_code == 401 or response.status_code == 302  # Depending on your setup
+===== ./tests/api/test_transactions_api.py =====
+# tests/api/test_transactions_api.py
+
+import pytest
+from datetime import datetime, timezone
+from modules.models.account import Account
+
+@pytest.fixture
+def setup_accounts(db):
+    debit_account = Account(name='Debit Account', type='Asset')
+    credit_account = Account(name='Credit Account', type='Revenue')
+    db.session.add_all([debit_account, credit_account])
+    db.session.commit()
+    return debit_account, credit_account
+
+@pytest.fixture
+def new_transaction_data(setup_accounts):
+    debit_account, credit_account = setup_accounts
+    return {
+        'date': datetime.now(timezone.utc).isoformat(),
+        'amount': 100.0,
+        'description': 'Test Transaction',
+        'debit_account_id': debit_account.id,
+        'credit_account_id': credit_account.id
+    }
+
+def login(client, test_user):
+    client.post('/api/auth/login', json={
+        'username': test_user.username,
+        'password': 'testpass'
+    })
+
+def test_get_transactions(client, test_user):
+    login(client, test_user)
+    response = client.get('/api/transactions/')
+    assert response.status_code == 200
+    assert isinstance(response.json, list)
+
+def test_create_transaction(client, db, test_user, new_transaction_data):
+    login(client, test_user)
+    response = client.post('/api/transactions/', json=new_transaction_data)
+    assert response.status_code == 201
+    assert response.json['description'] == new_transaction_data['description']
+
+def test_get_single_transaction(client, db, test_user, new_transaction_data):
+    login(client, test_user)
+    response = client.post('/api/transactions/', json=new_transaction_data)
+    transaction_id = response.json['id']
+    response = client.get(f'/api/transactions/{transaction_id}')
+    assert response.status_code == 200
+    assert response.json['id'] == transaction_id
+
+def test_update_transaction(client, db, test_user, new_transaction_data):
+    login(client, test_user)
+    response = client.post('/api/transactions/', json=new_transaction_data)
+    transaction_id = response.json['id']
+    updated_data = {
+        'description': 'Updated Transaction',
+        'amount': 150.0
+    }
+    response = client.put(f'/api/transactions/{transaction_id}', json=updated_data)
+    assert response.status_code == 200
+    assert response.json['description'] == updated_data['description']
+    assert response.json['amount'] == updated_data['amount']
+
+def test_delete_transaction(client, db, test_user, new_transaction_data):
+    login(client, test_user)
+    response = client.post('/api/transactions/', json=new_transaction_data)
+    transaction_id = response.json['id']
+    response = client.delete(f'/api/transactions/{transaction_id}')
+    assert response.status_code == 204
+    response = client.get(f'/api/transactions/{transaction_id}')
+    assert response.status_code == 404
+===== ./tests/api/__init__.py =====
 ===== ./tests/conftest.py =====
 # tests/conftest.py
 
@@ -714,38 +1239,32 @@ from werkzeug.security import generate_password_hash
 
 @pytest.fixture(scope='function')
 def app():
-    app = create_app('config.TestingConfig')  # Use TestingConfig
+    app = create_app('config.TestingConfig')
     app.config['TESTING'] = True
-
     with app.app_context():
         yield app
 
 @pytest.fixture(scope='function')
 def db(app):
-    with app.app_context():
-        _db.create_all()
-        # Create a test user
-        test_user = User(
-            username='testuser',
-            password_hash=generate_password_hash('testpassword'),
-            role='Admin'
-        )
-        _db.session.add(test_user)
-        _db.session.commit()
-        yield _db
-        _db.session.close()
-        _db.drop_all()
+    _db.create_all()
+    yield _db
+    _db.session.remove()
+    _db.drop_all()
+
+@pytest.fixture(scope='function')
+def test_user(db):
+    user = User(
+        username='testuser',
+        password_hash=generate_password_hash('testpass'),
+        role='User'
+    )
+    db.session.add(user)
+    db.session.commit()
+    return user
 
 @pytest.fixture(scope='function')
 def client(app, db):
-    with app.test_client() as client:
-        # Log in the test user
-        client.post('/auth/login', data={
-            'username': 'testuser',
-            'password': 'testpassword'
-        }, follow_redirects=True)
-        yield client
-        # No need to logout and rollback, as the database is dropped after each test
+    return app.test_client()
 ===== ./tests/test_models.py =====
 # tests/test_models.py
 
@@ -790,29 +1309,42 @@ import pytest
 from modules.models.account import Account
 from modules.models.transaction import Transaction
 
-def test_new_account(client, db):
+def login(client, test_user):
+    # Log in the test client
+    response = client.post('/auth/login', data={
+        'username': test_user.username,
+        'password': 'testpass'
+    }, follow_redirects=True)
+    assert response.status_code == 200
+    assert b'Logged in successfully.' in response.data
+
+def test_new_account(client, db, test_user):
+    login(client, test_user)
     # Create a unique account name using timestamp
     unique_account_name = f'Bank_Test_{datetime.now(timezone.utc).timestamp()}'
 
     # Create the account successfully
     response = client.post('/accounts/new', data={
         'name': unique_account_name,
-        'type': 'Asset'
+        'type': 'Asset',
+        'submit': 'Create Account'
     }, follow_redirects=True)
 
     assert response.status_code == 200
-    assert b'Account created successfully.' in response.data  # Adjust based on your flash message
+    assert b'Account created successfully.' in response.data
 
     # Attempt to create the same account again to test uniqueness
     response_duplicate = client.post('/accounts/new', data={
         'name': unique_account_name,
-        'type': 'Asset'
+        'type': 'Asset',
+        'submit': 'Create Account'
     }, follow_redirects=True)
 
-    assert response_duplicate.status_code == 200  # Expecting OK status with form re-rendered
-    assert b'Account name already exists.' in response_duplicate.data  # Verify error message
+    assert response_duplicate.status_code == 200
+    assert b'Account name already exists.' in response_duplicate.data
 
-def test_new_transaction(client, db):
+def test_new_transaction(client, db, test_user):
+    login(client, test_user)
     # Create accounts needed for the transaction
     debit_account = Account(name='Cash_Test', type='Asset')
     credit_account = Account(name='Revenue_Test', type='Revenue')
@@ -822,8 +1354,8 @@ def test_new_transaction(client, db):
 
     # Prepare transaction data
     transaction_data = {
-        'date': date.today().strftime('%Y-%m-%d'),  # Format date as string
-        'amount': '500.00',  # Amount must be a string when simulating form data
+        'date': date.today().strftime('%Y-%m-%d'),
+        'amount': '500.00',
         'description': 'Test Transaction via Web',
         'debit_account': str(debit_account.id),
         'credit_account': str(credit_account.id),
@@ -833,9 +1365,8 @@ def test_new_transaction(client, db):
     # Create the transaction via the web interface
     response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
 
-    # Assert the response indicates success
-    assert response.status_code == 200  # Adjust if you expect a redirect (e.g., 302)
-    assert b'Transaction created successfully.' in response.data  # Check for success message
+    assert response.status_code == 200
+    assert b'Transaction created successfully.' in response.data
 
     # Verify the transaction was saved in the database
     transaction = Transaction.query.filter_by(description='Test Transaction via Web').first()
@@ -845,21 +1376,21 @@ def test_new_transaction(client, db):
     assert transaction.debit_account_id == debit_account.id
     assert transaction.credit_account_id == credit_account.id
 
-def test_new_transaction_invalid_data(client, db):
+def test_new_transaction_invalid_data(client, db, test_user):
+    login(client, test_user)
     # Prepare incomplete transaction data
     transaction_data = {
-        'date': '',  # Missing date
-        'amount': '',  # Missing amount
-        'description': '',  # Missing description
-        'debit_account': '',  # Missing debit account
-        'credit_account': '',  # Missing credit account
+        'date': '',
+        'amount': '',
+        'description': '',
+        'debit_account': '',
+        'credit_account': '',
         'submit': 'Create Transaction'
     }
 
     # Attempt to create the transaction
     response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
 
-    # Assert the form re-renders with errors
     assert response.status_code == 200
     assert b'Please enter a valid date' in response.data
     assert b'Please enter a valid amount' in response.data
