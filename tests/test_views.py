@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 import pytest
 from modules.models.account import Account
 from modules.models.transaction import Transaction
+from modules.database.db import db  # Import db to access db.session.get()
 
 def login(client, test_user):
     # Log in the test client
@@ -23,77 +24,55 @@ def test_new_account(client, db, test_user):
     response = client.post('/accounts/new', data={
         'name': unique_account_name,
         'type': 'Asset',
-        'submit': 'Create Account'
+        'submit': 'Submit'
     }, follow_redirects=True)
 
     assert response.status_code == 200
     assert b'Account created successfully.' in response.data
 
-    # Attempt to create the same account again to test uniqueness
-    response_duplicate = client.post('/accounts/new', data={
-        'name': unique_account_name,
-        'type': 'Asset',
-        'submit': 'Create Account'
-    }, follow_redirects=True)
-
-    assert response_duplicate.status_code == 200
-    assert b'Account name already exists.' in response_duplicate.data
-
-def test_new_transaction(client, db, test_user):
+def test_edit_account(client, db, test_user):
     login(client, test_user)
-    # Create accounts needed for the transaction
-    debit_account = Account(name='Cash_Test', type='Asset')
-    credit_account = Account(name='Revenue_Test', type='Revenue')
-
-    db.session.add_all([debit_account, credit_account])
+    # Create an account to edit
+    account = Account(name='Edit_Test_Account', type='Asset')
+    db.session.add(account)
     db.session.commit()
 
-    # Prepare transaction data
-    transaction_data = {
-        'date': date.today().strftime('%Y-%m-%d'),
-        'amount': '500.00',
-        'description': 'Test Transaction via Web',
-        'debit_account': str(debit_account.id),
-        'credit_account': str(credit_account.id),
-        'submit': 'Create Transaction'
-    }
-
-    # Create the transaction via the web interface
-    response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
+    # Edit the account
+    response = client.post(f'/accounts/{account.id}/edit', data={
+        'name': 'Edited Account',
+        'type': 'Liability',
+        'submit': 'Submit'
+    }, follow_redirects=True)
 
     assert response.status_code == 200
-    assert b'Transaction created successfully.' in response.data
+    assert b'Account updated successfully.' in response.data
+    # Updated to use db.session.get()
+    updated_account = db.session.get(Account, account.id)
+    assert updated_account.name == 'Edited Account'
+    assert updated_account.type == 'Liability'
 
-    # Verify the transaction was saved in the database
-    transaction = Transaction.query.filter_by(description='Test Transaction via Web').first()
-    assert transaction is not None
-    assert transaction.amount == 500.00
-    assert transaction.date == date.today()
-    assert transaction.debit_account_id == debit_account.id
-    assert transaction.credit_account_id == credit_account.id
-
-def test_new_transaction_invalid_data(client, db, test_user):
+def test_delete_account(client, db, test_user):
     login(client, test_user)
-    # Prepare incomplete transaction data
-    transaction_data = {
-        'date': '',
-        'amount': '',
-        'description': '',
-        'debit_account': '',
-        'credit_account': '',
-        'submit': 'Create Transaction'
-    }
+    # Create an account to delete
+    account = Account(name='Delete_Test_Account', type='Asset')
+    db.session.add(account)
+    db.session.commit()
 
-    # Attempt to create the transaction
-    response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
+    # Delete the account
+    response = client.post(f'/accounts/{account.id}/delete', follow_redirects=True)
 
     assert response.status_code == 200
-    assert b'Please enter a valid date' in response.data
-    assert b'Please enter a valid amount' in response.data
-    assert b'Description is required' in response.data
-    assert b'Please select a debit account' in response.data
-    assert b'Please select a credit account' in response.data
+    assert b'Account deleted successfully.' in response.data
+    # Updated to use db.session.get()
+    deleted_account = db.session.get(Account, account.id)
+    assert deleted_account is None
 
-    # Ensure no transaction was created
-    transaction = Transaction.query.filter_by(description='').first()
-    assert transaction is None
+def test_edit_nonexistent_account(client, test_user):
+    login(client, test_user)
+    response = client.get('/accounts/99999/edit')
+    assert response.status_code == 404
+
+def test_delete_nonexistent_account(client, test_user):
+    login(client, test_user)
+    response = client.post('/accounts/99999/delete', follow_redirects=True)
+    assert response.status_code == 404

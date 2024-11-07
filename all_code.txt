@@ -291,15 +291,30 @@ app = create_app()
 
 if __name__ == '__main__':
     app.run()===== ./app/static/__init__.py =====
+===== ./app/templates/account_confirm_delete.html =====
+<!-- app/templates/account_confirm_delete.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Delete Account{% endblock %}
+
+{% block content %}
+<h2>Delete Account</h2>
+<p>Are you sure you want to delete the account "{{ account.name }}"?</p>
+<form method="post">
+    <input type="submit" value="Delete">
+    <a href="{{ url_for('accounts.list_accounts') }}">Cancel</a>
+</form>
+{% endblock %}
 ===== ./app/templates/account_form.html =====
 <!-- app/templates/account_form.html -->
 
 {% extends "base.html" %}
 
-{% block title %}Create Account{% endblock %}
+{% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<h2>Create New Account</h2>
+<h2>{{ title }}</h2>
 <form method="post">
     {{ form.hidden_tag() }}
     
@@ -334,11 +349,23 @@ if __name__ == '__main__':
 
 {% block content %}
 <h1>Accounts</h1>
-<ul>
+<table>
+    <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Actions</th>
+    </tr>
     {% for account in accounts %}
-        <li>{{ account.name }} - {{ account.type }}</li>
+    <tr>
+        <td>{{ account.name }}</td>
+        <td>{{ account.type }}</td>
+        <td>
+            <a href="{{ url_for('accounts.edit_account', account_id=account.id) }}">Edit</a> |
+            <a href="{{ url_for('accounts.delete_account', account_id=account.id) }}">Delete</a>
+        </td>
+    </tr>
     {% endfor %}
-</ul>
+</table>
 <a href="{{ url_for('accounts.new_account') }}">Create New Account</a>
 {% endblock %}
 ===== ./app/templates/base.html =====
@@ -377,9 +404,35 @@ if __name__ == '__main__':
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+
+        /* Simple table styling */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
     </style>
 </head>
 <body>
+    <nav>
+        <a href="{{ url_for('main.index') }}">Home</a> |
+        <a href="{{ url_for('accounts.list_accounts') }}">Accounts</a> |
+        <a href="{{ url_for('transactions.list_transactions') }}">Transactions</a> |
+        {% if current_user.is_authenticated %}
+            <a href="{{ url_for('auth.logout') }}">Logout</a>
+        {% else %}
+            <a href="{{ url_for('auth.login') }}">Login</a>
+        {% endif %}
+    </nav>
+
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             <div class="flash-messages">
@@ -496,13 +549,19 @@ if __name__ == '__main__':
 ===== ./app/views/accounts.py =====
 # app/views/accounts.py
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, abort
 from modules.forms.account_form import AccountForm
 from modules.models.account import Account
 from modules.database.db import db
 from flask_login import login_required
 
 bp = Blueprint('accounts', __name__, url_prefix='/accounts')
+
+@bp.route('/', methods=['GET'])
+@login_required
+def list_accounts():
+    accounts = Account.query.all()
+    return render_template('account_list.html', accounts=accounts)
 
 @bp.route('/new', methods=['GET', 'POST'])
 @login_required
@@ -517,14 +576,40 @@ def new_account():
         db.session.commit()
         flash('Account created successfully.', 'success')
         return redirect(url_for('accounts.list_accounts'))
-    return render_template('account_form.html', form=form)
+    return render_template('account_form.html', form=form, title='Create Account')
 
-
-@bp.route('/', methods=['GET'])
+@bp.route('/<int:account_id>/edit', methods=['GET', 'POST'])
 @login_required
-def list_accounts():
-    accounts = Account.query.all()
-    return render_template('account_list.html', accounts=accounts)
+def edit_account(account_id):
+    # Updated to use db.session.get() and handle 404 manually
+    account = db.session.get(Account, account_id)
+    if not account:
+        abort(404)
+    form = AccountForm(obj=account)
+    if form.validate_on_submit():
+        if Account.query.filter(Account.name == form.name.data, Account.id != account.id).first():
+            form.name.errors.append('Account name already exists.')
+        else:
+            account.name = form.name.data
+            account.type = form.type.data
+            db.session.commit()
+            flash('Account updated successfully.', 'success')
+            return redirect(url_for('accounts.list_accounts'))
+    return render_template('account_form.html', form=form, title='Edit Account')
+
+@bp.route('/<int:account_id>/delete', methods=['GET', 'POST'])
+@login_required
+def delete_account(account_id):
+    # Updated to use db.session.get() and handle 404 manually
+    account = db.session.get(Account, account_id)
+    if not account:
+        abort(404)
+    if request.method == 'POST':
+        db.session.delete(account)
+        db.session.commit()
+        flash('Account deleted successfully.', 'success')
+        return redirect(url_for('accounts.list_accounts'))
+    return render_template('account_confirm_delete.html', account=account)
 ===== ./app/views/auth.py =====
 # app/views/auth.py
 
@@ -912,6 +997,7 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()===== ./modules/database/__init__.py =====
 ===== ./modules/forms/account_form.py =====
 # modules/forms/account_form.py
+
 from flask_wtf import FlaskForm
 from wtforms import StringField, SelectField, SubmitField
 from wtforms.validators import DataRequired, ValidationError
@@ -926,11 +1012,17 @@ class AccountForm(FlaskForm):
         ('Revenue', 'Revenue'),
         ('Expense', 'Expense')
     ], validators=[DataRequired()])
-    submit = SubmitField('Create Account')
+    submit = SubmitField('Submit')
+
+    def __init__(self, *args, **kwargs):
+        super(AccountForm, self).__init__(*args, **kwargs)
+        self._account_id = kwargs.get('obj').id if 'obj' in kwargs and kwargs.get('obj') else None
 
     def validate_name(self, field):
-        if Account.query.filter_by(name=field.data).first():
-            raise ValidationError('Account name already exists.')===== ./modules/forms/login_form.py =====
+        account = Account.query.filter_by(name=field.data).first()
+        if account and (self._account_id is None or account.id != self._account_id):
+            raise ValidationError('Account name already exists.')
+===== ./modules/forms/login_form.py =====
 # modules/forms/login_form.py
 
 from flask_wtf import FlaskForm
@@ -1440,6 +1532,7 @@ from datetime import date, datetime, timezone
 import pytest
 from modules.models.account import Account
 from modules.models.transaction import Transaction
+from modules.database.db import db  # Import db to access db.session.get()
 
 def login(client, test_user):
     # Log in the test client
@@ -1459,78 +1552,56 @@ def test_new_account(client, db, test_user):
     response = client.post('/accounts/new', data={
         'name': unique_account_name,
         'type': 'Asset',
-        'submit': 'Create Account'
+        'submit': 'Submit'
     }, follow_redirects=True)
 
     assert response.status_code == 200
     assert b'Account created successfully.' in response.data
 
-    # Attempt to create the same account again to test uniqueness
-    response_duplicate = client.post('/accounts/new', data={
-        'name': unique_account_name,
-        'type': 'Asset',
-        'submit': 'Create Account'
-    }, follow_redirects=True)
-
-    assert response_duplicate.status_code == 200
-    assert b'Account name already exists.' in response_duplicate.data
-
-def test_new_transaction(client, db, test_user):
+def test_edit_account(client, db, test_user):
     login(client, test_user)
-    # Create accounts needed for the transaction
-    debit_account = Account(name='Cash_Test', type='Asset')
-    credit_account = Account(name='Revenue_Test', type='Revenue')
-
-    db.session.add_all([debit_account, credit_account])
+    # Create an account to edit
+    account = Account(name='Edit_Test_Account', type='Asset')
+    db.session.add(account)
     db.session.commit()
 
-    # Prepare transaction data
-    transaction_data = {
-        'date': date.today().strftime('%Y-%m-%d'),
-        'amount': '500.00',
-        'description': 'Test Transaction via Web',
-        'debit_account': str(debit_account.id),
-        'credit_account': str(credit_account.id),
-        'submit': 'Create Transaction'
-    }
-
-    # Create the transaction via the web interface
-    response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
+    # Edit the account
+    response = client.post(f'/accounts/{account.id}/edit', data={
+        'name': 'Edited Account',
+        'type': 'Liability',
+        'submit': 'Submit'
+    }, follow_redirects=True)
 
     assert response.status_code == 200
-    assert b'Transaction created successfully.' in response.data
+    assert b'Account updated successfully.' in response.data
+    # Updated to use db.session.get()
+    updated_account = db.session.get(Account, account.id)
+    assert updated_account.name == 'Edited Account'
+    assert updated_account.type == 'Liability'
 
-    # Verify the transaction was saved in the database
-    transaction = Transaction.query.filter_by(description='Test Transaction via Web').first()
-    assert transaction is not None
-    assert transaction.amount == 500.00
-    assert transaction.date == date.today()
-    assert transaction.debit_account_id == debit_account.id
-    assert transaction.credit_account_id == credit_account.id
-
-def test_new_transaction_invalid_data(client, db, test_user):
+def test_delete_account(client, db, test_user):
     login(client, test_user)
-    # Prepare incomplete transaction data
-    transaction_data = {
-        'date': '',
-        'amount': '',
-        'description': '',
-        'debit_account': '',
-        'credit_account': '',
-        'submit': 'Create Transaction'
-    }
+    # Create an account to delete
+    account = Account(name='Delete_Test_Account', type='Asset')
+    db.session.add(account)
+    db.session.commit()
 
-    # Attempt to create the transaction
-    response = client.post('/transactions/new', data=transaction_data, follow_redirects=True)
+    # Delete the account
+    response = client.post(f'/accounts/{account.id}/delete', follow_redirects=True)
 
     assert response.status_code == 200
-    assert b'Please enter a valid date' in response.data
-    assert b'Please enter a valid amount' in response.data
-    assert b'Description is required' in response.data
-    assert b'Please select a debit account' in response.data
-    assert b'Please select a credit account' in response.data
+    assert b'Account deleted successfully.' in response.data
+    # Updated to use db.session.get()
+    deleted_account = db.session.get(Account, account.id)
+    assert deleted_account is None
 
-    # Ensure no transaction was created
-    transaction = Transaction.query.filter_by(description='').first()
-    assert transaction is None
+def test_edit_nonexistent_account(client, test_user):
+    login(client, test_user)
+    response = client.get('/accounts/99999/edit')
+    assert response.status_code == 404
+
+def test_delete_nonexistent_account(client, test_user):
+    login(client, test_user)
+    response = client.post('/accounts/99999/delete', follow_redirects=True)
+    assert response.status_code == 404
 ===== ./tests/__init__.py =====

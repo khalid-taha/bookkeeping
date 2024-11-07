@@ -6,10 +6,22 @@
 
 {% block content %}
 <h1>Accounts</h1>
-<ul>
+<table>
+    <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Actions</th>
+    </tr>
     {% for account in accounts %}
-        <li>{{ account.name }} - {{ account.type }}</li>
+    <tr>
+        <td>{{ account.name }}</td>
+        <td>{{ account.type }}</td>
+        <td>
+            <a href="{{ url_for('accounts.edit_account', account_id=account.id) }}">Edit</a> |
+            <a href="{{ url_for('accounts.delete_account', account_id=account.id) }}">Delete</a>
+        </td>
+    </tr>
     {% endfor %}
-</ul>
+</table>
 <a href="{{ url_for('accounts.new_account') }}">Create New Account</a>
 {% endblock %}

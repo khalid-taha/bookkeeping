@@ -1,0 +1,14 @@
+<!-- app/templates/account_confirm_delete.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Delete Account{% endblock %}
+
+{% block content %}
+<h2>Delete Account</h2>
+<p>Are you sure you want to delete the account "{{ account.name }}"?</p>
+<form method="post">
+    <input type="submit" value="Delete">
+    <a href="{{ url_for('accounts.list_accounts') }}">Cancel</a>
+</form>
+{% endblock %}
